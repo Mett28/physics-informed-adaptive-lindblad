@@ -1,0 +1,106 @@
+from pathlib import Path
+import numpy as np
+from sim_lindblad_regimes_physinf import (
+    build_model,
+    run_reference,
+    run_standard_adaptive,
+    run_physinf_adaptive,
+    save_npz,
+    make_meta,
+)
+
+ROOT = Path(__file__).resolve().parent
+OUT_STD = ROOT / "outputs" / "regimes_standard_strict"
+OUT_PHY = ROOT / "outputs" / "regimes_physinf_strict"
+
+
+def save_run(path: Path, data: dict, meta: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    save_npz(path, **data, meta_json=make_meta(**meta))
+
+
+def run_regime_strict(name: str, gamma_phi: float, h: float, T: float):
+    print(f"Running STRICT {name}: gamma_phi={gamma_phi}, h={h}, T={T}")
+
+    model = build_model(gamma_phi=gamma_phi, h=h)
+    ref = run_reference(model, T=T, dt=0.0015)
+
+    for tol in [1e-2, 5e-3, 2e-3, 1e-3, 5e-4]:
+        # Standard adaptive: aynı kalsın, baseline olsun
+        std = run_standard_adaptive(model, ref, tol=tol, T=T, dt0=0.08)
+
+        std_meta = {
+            "scheme": "standard_adaptive",
+            "variant": "strict_baseline_compare",
+            "regime": name,
+            "tol": tol,
+            "gamma_phi": gamma_phi,
+            "h": h,
+            "T": T,
+            "accepted_steps": std["accepted_steps"],
+            "rejected_steps": std["rejected_steps"],
+            "channel_apps": std["channel_apps"],
+            "eps_obs_T": std["eps_obs_T"],
+            "eps_true_T": std["eps_true_T"],
+        }
+
+        save_run(
+            OUT_STD / name / f"std_tol{tol:.0e}.npz".replace("+0", ""),
+            std,
+            std_meta,
+        )
+
+        # Physics-informed: daha sert controller
+        phy = run_physinf_adaptive(
+            model,
+            ref,
+            tol=tol,
+            T=T,
+            dt0=0.08,
+            tau_tr=1e-12,
+            tau_lam=1e-10,
+            tau_obs_factor=1.0,
+            w_F=1.0,
+            w_tr=1.0,
+            w_lam=3.0,
+            w_obs=2.0,
+        )
+
+        phy_meta = {
+            "scheme": "physics_informed_adaptive",
+            "variant": "strict",
+            "regime": name,
+            "tol": tol,
+            "gamma_phi": gamma_phi,
+            "h": h,
+            "T": T,
+            "tau_tr": 1e-12,
+            "tau_lam": 1e-10,
+            "tau_obs_factor": 1.0,
+            "w_F": 1.0,
+            "w_tr": 1.0,
+            "w_lam": 3.0,
+            "w_obs": 2.0,
+            "accepted_steps": phy["accepted_steps"],
+            "rejected_steps": phy["rejected_steps"],
+            "correction_count": phy["correction_count"],
+            "channel_apps": phy["channel_apps"],
+            "eps_obs_T": phy["eps_obs_T"],
+            "eps_true_T": phy["eps_true_T"],
+        }
+
+        save_run(
+            OUT_PHY / name / f"phys_tol{tol:.0e}.npz".replace("+0", ""),
+            phy,
+            phy_meta,
+        )
+
+
+def main():
+    run_regime_strict("regime2", gamma_phi=0.15, h=0.35, T=20.0)
+    run_regime_strict("regime3", gamma_phi=0.5, h=1.5, T=10.0)
+    print("Strict regime runs completed.")
+
+
+if __name__ == "__main__":
+    main()
